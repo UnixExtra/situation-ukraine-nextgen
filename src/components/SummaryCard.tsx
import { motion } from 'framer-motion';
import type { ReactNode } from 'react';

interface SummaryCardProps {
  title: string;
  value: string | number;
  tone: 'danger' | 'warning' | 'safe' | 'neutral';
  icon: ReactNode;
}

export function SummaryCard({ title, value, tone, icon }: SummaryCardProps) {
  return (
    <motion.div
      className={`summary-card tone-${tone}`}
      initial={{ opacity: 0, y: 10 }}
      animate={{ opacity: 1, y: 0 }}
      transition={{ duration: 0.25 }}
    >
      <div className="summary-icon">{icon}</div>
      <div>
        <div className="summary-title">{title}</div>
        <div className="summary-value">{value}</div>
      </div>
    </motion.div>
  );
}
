@@ -1,0 +1,130 @@
+import type { DashboardSnapshot, RegionAlert, SourceStatus } from '../types';
+
+const normalizeLevel = (value: string): RegionAlert['level'] => {
+  const lower = value.toLowerCase();
+  if (lower.includes('red')) return 'red';
+  if (lower.includes('orange')) return 'orange';
+  if (lower.includes('yellow')) return 'yellow';
+  if (lower.includes('safe') || lower.includes('green')) return 'safe';
+  return 'info';
+};
+
+const withTimeout = async <T>(promiseFactory: () => Promise<T>, timeoutMs = 10000): Promise<T> => {
+  let timeoutId: number | undefined;
+
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error('Request timed out')), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promiseFactory(), timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+};
+
+const readJson = async <T>(response: Response): Promise<T> => {
+  const text = await response.text();
+  if (!text) {
+    return {} as T;
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error('Invalid JSON response from provider');
+  }
+};
+
+const buildSourceStatus = (name: string, status: SourceStatus['status'], detail: string, errorAt?: string | null): SourceStatus => ({
+  name,
+  status,
+  detail,
+  lastSuccessAt: status === 'ok' ? new Date().toISOString() : null,
+  lastErrorAt: errorAt ?? (status === 'offline' ? new Date().toISOString() : null)
+});
+
+export async function fetchDashboardData(): Promise<DashboardSnapshot> {
+  const sources: SourceStatus[] = [];
+  const base = import.meta.env.VITE_ALERTS_API_BASE as string | undefined;
+  const alertsPath = import.meta.env.VITE_ALERTS_API_ALERTS_PATH as string | undefined;
+  const regionsPath = import.meta.env.VITE_ALERTS_API_REGIONS_PATH as string | undefined;
+
+  if (!base || !alertsPath || !regionsPath) {
+    return {
+      regionAlerts: [],
+      sources: [
+        {
+          name: 'Alerts.in.ua',
+          status: 'offline',
+          detail: 'Missing environment configuration for provider access',
+          lastSuccessAt: null,
+          lastErrorAt: new Date().toISOString()
+        }
+      ],
+      updatedAt: new Date().toISOString(),
+      error: 'Provider configuration missing'
+    };
+  }
+
+  try {
+    const token = import.meta.env.VITE_ALERTS_API_TOKEN as string | undefined;
+    const headers = {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    };
+
+    const [alertsResponse, regionResponse] = await Promise.all([
+      withTimeout(() => fetch(`${base}${alertsPath}`, { headers }), 12000),
+      withTimeout(() => fetch(`${base}${regionsPath}`, { headers }), 12000)
+    ]);
+
+    if (!alertsResponse.ok || !regionResponse.ok) {
+      throw new Error('Provider responded with an HTTP error');
+    }
+
+    const alertsJson = await readJson<any>(alertsResponse);
+    const regionJson = await readJson<any>(regionResponse);
+
+    const alertItems = Array.isArray(alertsJson) ? alertsJson : alertsJson.data ?? [];
+    const regionItems = Array.isArray(regionJson) ? regionJson : regionJson.data ?? [];
+
+    const regionAlerts: RegionAlert[] = alertItems.map((item: any, index: number) => {
+      const regionMeta = regionItems.find((r: any) => String(r.id) === String(item.regionId ?? item.id)) ?? {};
+
+      return {
+        id: String(item.id ?? item.regionId ?? `${index}`),
+        name: item.name ?? regionMeta.name ?? 'Unknown region',
+        level: normalizeLevel(item.level ?? item.alertLevel ?? 'info'),
+        source: 'Alerts.in.ua',
+        lastUpdated: item.updatedAt ?? item.startedAt ?? new Date().toISOString(),
+        note: item.note ?? regionMeta.note ?? 'Official alert status',
+        coordinates: item.coordinates ?? regionMeta.coordinates ?? { lat: 50.45, lng: 30.52 }
+      };
+    });
+
+    sources.push(
+      buildSourceStatus('Alerts.in.ua', regionAlerts.length > 0 ? 'ok' : 'degraded', regionAlerts.length > 0 ? 'Live alerts available' : 'No active alerts reported')
+    );
+
+    return {
+      regionAlerts,
+      sources,
+      updatedAt: new Date().toISOString(),
+      error: undefined
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown API error';
+    sources.push(buildSourceStatus('Alerts.in.ua', 'offline', message, new Date().toISOString()));
+
+    return {
+      regionAlerts: [],
+      sources,
+      updatedAt: new Date().toISOString(),
+      error: 'Unable to load official alerts data'
+    };
+  }
+}

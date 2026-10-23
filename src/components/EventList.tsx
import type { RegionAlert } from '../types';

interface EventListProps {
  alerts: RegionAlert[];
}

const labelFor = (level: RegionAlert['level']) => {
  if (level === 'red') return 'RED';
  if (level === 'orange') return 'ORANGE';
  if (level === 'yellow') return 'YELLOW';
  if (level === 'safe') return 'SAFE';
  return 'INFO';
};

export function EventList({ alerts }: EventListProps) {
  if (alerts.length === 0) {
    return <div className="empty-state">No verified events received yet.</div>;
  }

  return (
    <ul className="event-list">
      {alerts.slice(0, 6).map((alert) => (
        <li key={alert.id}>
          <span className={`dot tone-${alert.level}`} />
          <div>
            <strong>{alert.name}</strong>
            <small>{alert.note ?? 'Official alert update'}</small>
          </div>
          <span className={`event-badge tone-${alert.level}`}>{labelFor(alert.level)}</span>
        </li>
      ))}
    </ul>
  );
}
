@@ -1,0 +1,64 @@
+import { motion } from 'framer-motion';
+import { MapContainer, Marker, TileLayer, ZoomControl } from 'react-leaflet';
+import L from 'leaflet';
+import type { RegionAlert } from '../types';
+
+const markerColors: Record<RegionAlert['level'], string> = {
+  safe: '#4de1a6',
+  yellow: '#f9d66d',
+  orange: '#ff9a4a',
+  red: '#ff5a5a',
+  info: '#7f9dbf'
+};
+
+function createAlertIcon(color: string) {
+  return new L.DivIcon({
+    className: 'custom-marker',
+    html: `<span style="background:${color};box-shadow:0 0 18px ${color};"></span>`,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9]
+  });
+}
+
+interface MapViewProps {
+  alerts: RegionAlert[];
+}
+
+export function MapView({ alerts }: MapViewProps) {
+  if (alerts.length === 0) {
+    return (
+      <div className="empty-map-panel">
+        <p>No verified markers available.</p>
+      </div>
+    );
+  }
+
+  const center: [number, number] = [49.0, 31.0];
+
+  return (
+    <motion.div
+      className="map-shell"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
+    >
+      <MapContainer center={center} zoom={6} scrollWheelZoom zoomControl={false} className="map-container">
+        <ZoomControl position="bottomright" />
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+        {alerts.map((alert) => {
+          const point = alert.coordinates ?? { lat: 50.45, lng: 30.52 };
+          return (
+            <Marker
+              key={alert.id}
+              position={[point.lat, point.lng]}
+              icon={createAlertIcon(markerColors[alert.level])}
+            />
+          );
+        })}
+      </MapContainer>
+    </motion.div>
+  );
+}

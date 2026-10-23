@@ -1,0 +1,139 @@
+import { AlertTriangle, CloudRain, MapPinned, ShieldCheck } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { EventList } from './components/EventList';
+import { MapView } from './components/MapView';
+import { SourceStatusList } from './components/SourceStatusList';
+import { SummaryCard } from './components/SummaryCard';
+import { useDashboardData } from './hooks/useDashboardData';
+import { DEFAULT_SETTINGS, readSettings, writeSettings } from './lib/storage';
+import type { AppSettings } from './types';
+
+function App() {
+  const { data, loading, error } = useDashboardData();
+  const [settings, setSettings] = useState<AppSettings>({ ...DEFAULT_SETTINGS, ...readSettings() });
+
+  useEffect(() => {
+    writeSettings(settings);
+  }, [settings]);
+
+  const summary = {
+    red: data?.regionAlerts.filter((alert) => alert.level === 'red').length ?? 0,
+    warns: data?.regionAlerts.filter((alert) => alert.level !== 'safe' && alert.level !== 'info').length ?? 0,
+    safe: data?.regionAlerts.filter((alert) => alert.level === 'safe').length ?? 0,
+    weather: 0
+  };
+
+  const label = (value: string) => {
+    if (value === 'uk') return 'UA';
+    if (value === 'en') return 'EN';
+    return 'RU';
+  };
+
+  return (
+    <div className={`app-shell theme-${settings.theme}`}>
+      <header className="topbar panel">
+        <div className="brand-wrap">
+          <div className="brand-mark">U</div>
+          <div>
+            <div className="eyebrow">Situational Intelligence</div>
+            <h1>Ситуація в Україні</h1>
+          </div>
+        </div>
+
+        <div className="toolbar-right">
+          <div className="pill muted">{data ? new Date(data.updatedAt).toLocaleString() : 'Waiting for data'}</div>
+          <div className="pill accent">{loading ? 'Refreshing' : 'Live feed'}</div>
+          <div className="pill small">{label(settings.language)}</div>
+        </div>
+      </header>
+
+      <AnimatePresence mode="wait">
+        <motion.main
+          key={loading ? 'loading' : 'ready'}
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -12 }}
+          transition={{ duration: 0.28, ease: 'easeOut' }}
+          className="content-stack"
+        >
+          <section className="summary-grid">
+            <SummaryCard title="Red warnings" value={summary.red} tone="danger" icon={<AlertTriangle size={18} />} />
+            <SummaryCard title="Regional alerts" value={summary.warns} tone="warning" icon={<MapPinned size={18} />} />
+            <SummaryCard title="Safe regions" value={summary.safe} tone="safe" icon={<ShieldCheck size={18} />} />
+            <SummaryCard title="Weather alerts" value={summary.weather} tone="neutral" icon={<CloudRain size={18} />} />
+          </section>
+
+          {error && (
+            <div className="error-banner">
+              <AlertTriangle size={16} />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <section className="content-grid">
+            <div className="panel map-panel">
+              <div className="panel-header">
+                <h2>Monitoring map</h2>
+                <span className="chip">Ukraine</span>
+              </div>
+              <MapView alerts={data?.regionAlerts ?? []} />
+            </div>
+
+            <div className="panel">
+              <div className="panel-header">
+                <h2>Recent events</h2>
+              </div>
+              <EventList alerts={data?.regionAlerts ?? []} />
+            </div>
+          </section>
+
+          <section className="bottom-grid">
+            <div className="panel">
+              <div className="panel-header">
+                <h2>Source status</h2>
+              </div>
+              <SourceStatusList sources={data?.sources ?? []} />
+            </div>
+
+            <div className="panel settings-panel">
+              <div className="panel-header">
+                <h2>Settings</h2>
+              </div>
+              <div className="settings-list">
+                <label>
+                  Theme
+                  <select value={settings.theme} onChange={(event) => setSettings({ ...settings, theme: event.target.value as AppSettings['theme'] })}>
+                    <option value="dark">Dark</option>
+                    <option value="light">Light</option>
+                  </select>
+                </label>
+                <label>
+                  Language
+                  <select value={settings.language} onChange={(event) => setSettings({ ...settings, language: event.target.value as AppSettings['language'] })}>
+                    <option value="uk">Українська</option>
+                    <option value="en">English</option>
+                    <option value="ru">Русский</option>
+                  </select>
+                </label>
+                <label>
+                  Refresh interval
+                  <select value={settings.refreshInterval} onChange={(event) => setSettings({ ...settings, refreshInterval: Number(event.target.value) })}>
+                    <option value={30000}>30s</option>
+                    <option value={60000}>60s</option>
+                    <option value={120000}>120s</option>
+                  </select>
+                </label>
+                <label className="toggle-row">
+                  <span>Notifications</span>
+                  <input type="checkbox" checked={settings.notifications} onChange={(event) => setSettings({ ...settings, notifications: event.target.checked })} />
+                </label>
+              </div>
+            </div>
+          </section>
+        </motion.main>
+      </AnimatePresence>
+    </div>
+  );
+}
+
+export default App;
